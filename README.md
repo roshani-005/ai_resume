@@ -1,0 +1,46 @@
+# AI Resume Screener & Job Matcher
+
+An AI-powered agent that scores resume-to-job fit and explains the match in
+plain language, using retrieval (TF-IDF) grounded LLM reasoning (Groq Llama 3.3).
+
+## Project Structure
+```
+.
+├── main.py           # FastAPI entrypoint, routes, static file serving
+├── agent.py           # Orchestrator: ties together rag + tools + memory + LLM
+├── rag.py             # Retrieval layer: TF-IDF cosine similarity scoring
+├── memory.py          # Per-session history of past analyses
+├── tools.py           # PDF extraction, text cleaning, keyword extraction
+├── static/
+│   └── index.html     # Simple web UI served directly by FastAPI
+├── requirements.txt
+├── runtime.txt         # Pins Python version for deployment (e.g. Render)
+└── .gitignore
+```
+
+## Setup
+```bash
+pip install -r requirements.txt
+export GROQ_API_KEY=your_key_here   # optional, enables LLM explanations
+uvicorn main:app --reload --port 8000
+```
+
+Then open **http://localhost:8000** — the FastAPI app serves the frontend directly.
+
+## API
+- `GET /health` — service status
+- `POST /analyze` — upload a PDF resume + job description → fit score, matched keywords, LLM explanation
+- `POST /analyze-text` — same, but with raw resume text (no PDF needed)
+- `GET /history?session_id=...` — retrieve past analyses for a session
+
+## How it works (RAG-style pipeline)
+1. **Retrieve** — `rag.py` vectorizes resume + job description with TF-IDF and computes cosine similarity as a grounded numeric fit score.
+2. **Augment** — `agent.py` pulls the top overlapping terms and feeds them, along with the score, into the LLM prompt so the explanation is grounded in real evidence, not hallucinated.
+3. **Generate** — Groq's Llama 3.3 produces a concise, recruiter-readable explanation.
+4. **Remember** — `memory.py` stores each analysis per session so a recruiter can review multiple candidates against the same role in one sitting.
+
+## Deployment
+Includes `runtime.txt` for platforms like Render/Heroku that pin the Python
+version from that file. Static frontend is served by FastAPI itself, so no
+separate frontend deploy is needed.
+
