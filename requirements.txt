@@ -1,0 +1,89 @@
+"""
+main.py
+-------
+FastAPI entry point. Wires up REST endpoints and serves the static
+frontend (static/index.html) — mirrors the pattern of a FastAPI app
+that also serves its own UI, no separate frontend deploy needed.
+
+Run:
+    uvicorn main:app --reload --port 8000
+"""
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import List
+
+import agent
+from tools import extract_text_from_pdf
+
+app = FastAPI(title="AI Resume Screener & Job Matcher")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve the frontend at /static, e.g. static/index.html
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+class MatchResponse(BaseModel):
+    fit_score: float
+    matched_keywords: List[str]
+    job_keywords: List[str]
+    explanation: str
+
+
+@app.get("/")
+def root():
+    return FileResponse("static/index.html")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "llm_enabled": agent._client is not None}
+
+
+@app.post("/analyze", response_model=MatchResponse)
+async def analyze_resume(
+    job_description: str = Form(...),
+    resume: UploadFile = File(...),
+    session_id: str = Form("default"),
+):
+    if resume.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF resumes are supported.")
+
+    file_bytes = await resume.read()
+    resume_text = extract_text_from_pdf(file_bytes)
+
+    if not resume_text.strip():
+        raise HTTPException(status_code=422, detail="Could not extract text from PDF.")
+
+    result = agent.analyze(resume_text, job_description, session_id)
+    return result
+
+
+@app.post("/analyze-text", response_model=MatchResponse)
+def analyze_resume_text(
+    resume_text: str = Form(...),
+    job_description: str = Form(...),
+    session_id: str = Form("default"),
+):
+    """Same as /analyze but accepts raw text instead of a PDF (useful for testing)."""
+    result = agent.analyze(resume_text, job_description, session_id)
+    return result
+
+
+@app.get("/history")
+def history(session_id: str = Query("default")):
+    return {"session_id": session_id, "history": agent.get_session_history(session_id)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
